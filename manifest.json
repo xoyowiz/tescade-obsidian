@@ -3,7 +3,7 @@
 	"name": "Tescade",
 	"version": "1.0.0",
 	"minAppVersion": "1.0.0",
-	"description": "Recursively resolves Obsidian wikilinks into a standalone Markdown file.",
+	"description": "Recursively resolves wikilinks into standalone Markdown files.",
 	"author": "xoyowiz",
 	"isDesktopOnly": false
 }
