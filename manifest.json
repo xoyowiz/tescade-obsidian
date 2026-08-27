@@ -1,7 +1,7 @@
 {
 	"id": "tescade",
 	"name": "Tescade",
-	"version": "1.0.0",
+	"version": "1.0.1",
 	"minAppVersion": "1.0.0",
 	"description": "Recursively resolves wikilinks into standalone Markdown files.",
 	"author": "xoyowiz",
