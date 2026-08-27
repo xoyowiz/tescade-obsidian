@@ -1,92 +1,187 @@
-# Obsidian Sample Plugin
+# Tescade
 
-This is a sample plugin for Obsidian (https://obsidian.md).
+Tescade is a tiny Obsidian plugin for recursively resolving wikilinks into a standalone Markdown file.
 
-This project uses TypeScript to provide type checking and documentation.
-The repo depends on the latest plugin API (obsidian.d.ts) in TypeScript Definition format, which contains TSDoc comments describing what it does.
+It treats `[[wikilinks]]` as instructions to insert the contents of the referenced note at that exact location.
 
-This sample plugin demonstrates some of the basic functionality the plugin API can do.
+## How it works
 
-- Adds a ribbon icon, which shows a Notice when clicked.
-- Adds a command "Open modal (simple)" which opens a Modal.
-- Adds a plugin setting tab to the settings page.
-- Registers a global click event and outputs a Notice on click.
-- Registers a global interval which logs 'setInterval' to the console.
+Given a note:
 
-## First time developing plugins?
+```markdown
+This is the main note.
 
-Quick starting guide for new plugin devs:
+[[Another Note]]
 
-- Check if [someone already developed a plugin for what you want](https://obsidian.md/plugins)! There might be an existing plugin similar enough that you can partner up with.
-- Make a copy of this repo as a template with the "Use this template" button (login to GitHub if you don't see it).
-- Clone your repo to a local development folder. For convenience, you can place this folder in your `.obsidian/plugins/your-plugin-name` folder.
-- Install NodeJS, then run `npm i` in the command line under your repo folder.
-- Run `npm run dev` to compile your plugin from `src/main.ts` to `main.js`.
-- Make changes to `src/main.ts` (or create new `.ts` files). Those changes should be automatically compiled into `main.js`.
-- Reload Obsidian to load the new version of your plugin.
-- Enable plugin in settings window.
-- For updates to the Obsidian API run `npm update` in the command line under your repo folder.
-
-## Releasing new releases
-
-- Update your `manifest.json` with your new version number, such as `1.0.1`, and the minimum Obsidian version required for your latest release.
-- Update your `versions.json` file with `"new-plugin-version": "minimum-obsidian-version"` so older versions of Obsidian can download an older version of your plugin that's compatible.
-- Create new GitHub release using your new version number as the "Tag version". Use the exact version number, don't include a prefix `v`. See here for an example: https://github.com/obsidianmd/obsidian-sample-plugin/releases
-- Upload the files `manifest.json`, `main.js`, `styles.css` as binary attachments. Note: The manifest.json file must be in two places, first the root path of your repository and also in the release.
-- Publish the release.
-
-> You can simplify the version bump process by running `npm version patch`, `npm version minor` or `npm version major` after updating `minAppVersion` manually in `manifest.json`.
-> The command will bump version in `manifest.json` and `package.json`, and add the entry for the new version to `versions.json`
-
-## Adding your plugin to the community plugin list
-
-- Check the [plugin guidelines](https://docs.obsidian.md/Plugins/Releasing/Plugin+guidelines).
-- Publish an initial version.
-- Make sure you have a `README.md` file in the root of your repo.
-- Make a pull request at https://github.com/obsidianmd/obsidian-releases to add your plugin.
-
-## How to use
-
-- Clone this repo.
-- Make sure your NodeJS is at least v18 (`node --version`).
-- `npm i` to install dependencies.
-- `npm run dev` to start compilation in watch mode.
-
-## Manually installing the plugin
-
-- Copy over `main.js`, `styles.css`, `manifest.json` to your vault `VaultFolder/.obsidian/plugins/your-plugin-id/`.
-
-## Improve code quality with eslint
-
-- [ESLint](https://eslint.org/) is a tool that analyzes your code to quickly find problems. You can run ESLint against your plugin to find common bugs and ways to improve your code.
-- This project already has eslint preconfigured, you can invoke a check by running`npm run lint`
-- Together with a custom eslint [plugin](https://github.com/obsidianmd/eslint-plugin) for Obsidan specific code guidelines.
-- A GitHub action is preconfigured to automatically lint every commit on all branches.
-
-## Funding URL
-
-You can include funding URLs where people who use your plugin can financially support it.
-
-The simple way is to set the `fundingUrl` field to your link in your `manifest.json` file:
-
-```json
-{
-	"fundingUrl": "https://buymeacoffee.com"
-}
+This is the end.
 ```
 
-If you have multiple URLs, you can also do:
+where `Another Note.md` contains:
 
-```json
-{
-	"fundingUrl": {
-		"Buy Me a Coffee": "https://buymeacoffee.com",
-		"GitHub Sponsor": "https://github.com/sponsors",
-		"Patreon": "https://www.patreon.com/"
-	}
-}
+```markdown
+This comes from another note.
+
+[[Third Note]]
 ```
 
-## API Documentation
+and `Third Note.md` contains:
 
-See https://docs.obsidian.md
+```markdown
+This comes from the third note.
+```
+
+Tescade produces:
+
+```text
+Main Note-resolved.md
+```
+
+containing:
+
+```markdown
+This is the main note.
+
+This comes from another note.
+
+This comes from the third note.
+
+This is the end.
+```
+
+The original notes are not modified.
+
+## Usage
+
+Open the Markdown note you want to resolve.
+
+From the Obsidian Command Palette, run:
+
+```text
+Tescade: Resolve file
+```
+
+Tescade recursively follows the note's wikilinks and creates a `-resolved.md` file next to the original.
+
+For example:
+
+```text
+My Document.md
+My Document-resolved.md
+```
+
+## Recursive resolution
+
+Wikilinks are resolved recursively.
+
+```text
+A
+└── [[B]]
+    └── [[C]]
+        └── [[D]]
+```
+
+Resolving `A` inserts the contents of `B`, `C`, and `D` into the resulting document.
+
+## Circular links
+
+Tescade detects circular references and stops with an error instead of recursively processing the same files forever.
+
+For example:
+
+```text
+A → B → C → A
+```
+
+will be reported as a circular link.
+
+## Missing files
+
+If a wikilink cannot be resolved to a file in the vault, Tescade reports an error rather than silently omitting the link.
+
+## Design
+
+Tescade is intentionally simple.
+
+Its purpose is to provide a straightforward Markdown composition mechanism:
+
+```text
+[[Note]]
+```
+
+becomes:
+
+```text
+contents of Note
+```
+
+and this process continues recursively.
+
+The resolved file is a generated artifact; the source notes remain unchanged.
+
+## Installation
+
+### Manual installation
+
+Build the plugin and copy the plugin directory into:
+
+```text
+YourVault/.obsidian/plugins/tescade/
+```
+
+The directory must contain at least:
+
+```text
+tescade/
+├── main.js
+└── manifest.json
+```
+
+Then enable **Tescade** under:
+
+**Settings → Community plugins → Installed plugins**
+
+## Development
+
+Install dependencies:
+
+```bash
+npm install
+```
+
+Run the development build:
+
+```bash
+npm run dev
+```
+
+This watches the source files and rebuilds `main.js` whenever they change.
+
+For a production build:
+
+```bash
+npm run build
+```
+
+## Non-goals
+
+Tescade is not intended to be a general-purpose publishing or export system.
+
+It does not attempt to provide:
+
+* templates
+* variables
+* scripting
+* conditionals
+* loops
+* macros
+* document formatting
+* graph-based export configuration
+
+Its purpose is simply **recursive text composition through Obsidian wikilinks**.
+
+
+## DISCLAIMERS
+
+> **LLM assistance:** Portions of the code and accompanying documentation were formatted, refined, or partially generated with the assistance of a large language model (LLM). The resulting code was reviewed and tested by the author, but LLM assistance was used as part of the development process.
+
+> **Project scope:** As of the current version (1.0.0), no further features are intended to be added to Tescade. The project is deliberately kept small and focused on its core purpose of recursively resolving Obsidian wikilinks into standalone Markdown files.

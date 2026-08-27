@@ -1,114 +1,181 @@
-import {
-	Editor,
-	MarkdownView,
-	MarkdownFileInfo,
-	Modal,
-	Notice,
-	Plugin,
-} from 'obsidian';
-import {
-	DEFAULT_SETTINGS,
-	MyPluginSettings,
-	SampleSettingTab,
-} from './settings';
 
-// Remember to rename these classes and interfaces!
+import { MarkdownView, Notice, Plugin, TFile } from 'obsidian';
 
-export default class MyPlugin extends Plugin {
-	settings!: MyPluginSettings;
+/**
+ * Matches Obsidian wikilinks that refer to another note.
+ *
+ * The note name is captured while optional aliases (`|alias`) and
+ * heading/block references (`#...`) are ignored for resolution.
+ */
+const WIKILINK_PATTERN = /\[\[([^\]|#]+)(?:\|[^\]]+)?\]\]/g;
 
+/**
+ * Base error type for errors raised while resolving a Tescade document.
+ */
+class TescadeError extends Error {}
+
+/**
+ * Raised when resolving a wikilink would cause a file to be processed
+ * more than once along the current resolution path.
+ */
+class CircularIncludeError extends TescadeError {}
+
+/**
+ * Raised when a wikilink cannot be resolved to a file in the vault.
+ */
+class MissingFileError extends TescadeError {}
+
+/**
+ * Obsidian plugin entry point for Tescade.
+ *
+ * Tescade recursively replaces wikilinks with the contents of the
+ * referenced notes and writes the resulting document to a separate
+ * "-resolved" file.
+ */
+export default class TescadePlugin extends Plugin {
 	async onload() {
-		await this.loadSettings();
-
-		// This creates an icon in the left ribbon.
-		this.addRibbonIcon('dice', 'Sample', (_evt: MouseEvent) => {
-			// Called when the user clicks the icon.
-			new Notice('This is a notice!');
-		});
-
-		// This adds a status bar item to the bottom of the app. Does not work on mobile apps.
-		const statusBarItemEl = this.addStatusBarItem();
-		statusBarItemEl.setText('Status bar text');
-
-		// This adds a simple command that can be triggered anywhere
+		/**
+		 * Register the main Tescade command.
+		 *
+		 * The command is only available when a Markdown note is currently
+		 * open, since resolution starts from the active note.
+		 */
 		this.addCommand({
-			id: 'open-modal-simple',
-			name: 'Open modal (simple)',
-			callback: () => {
-				new SampleModal(this.app).open();
-			},
-		});
-		// This adds an editor command that can perform some operation on the current editor instance
-		this.addCommand({
-			id: 'replace-selected',
-			name: 'Replace selected content',
-			editorCallback: (
-				editor: Editor,
-				_ctx: MarkdownView | MarkdownFileInfo,
-			) => {
-				editor.replaceSelection('Sample editor command');
-			},
-		});
-		// This adds a complex command that can check whether the current state of the app allows execution of the command
-		this.addCommand({
-			id: 'open-modal-complex',
-			name: 'Open modal (complex)',
-			checkCallback: (checking: boolean) => {
-				// Conditions to check
-				const markdownView =
-					this.app.workspace.getActiveViewOfType(MarkdownView);
-				if (markdownView) {
-					// If checking is true, we're simply "checking" if the command can be run.
-					// If checking is false, then we want to actually perform the operation.
-					if (!checking) {
-						new SampleModal(this.app).open();
-					}
+			id: 'resolve-file',
+			name: 'Resolve file',
+			checkCallback: (checking) => {
+				const view = this.app.workspace.getActiveViewOfType(MarkdownView);
 
-					// This command will only show up in Command Palette when the check function returns true
-					return true;
+				if (!view?.file) {
+					return false;
 				}
-				return false;
+
+				if (!checking) {
+					void this.resolveActiveFile(view.file);
+				}
+
+				return true;
 			},
 		});
-
-		// This adds a settings tab so the user can configure various aspects of the plugin
-		this.addSettingTab(new SampleSettingTab(this.app, this));
-
-		// If the plugin hooks up any global DOM events (on parts of the app that doesn't belong to this plugin)
-		// Using this function will automatically remove the event listener when this plugin is disabled.
-		this.registerDomEvent(activeDocument, 'click', (_evt: MouseEvent) => {
-			new Notice('Click');
-		});
-
-		// When registering intervals, this function will automatically clear the interval when the plugin is disabled.
-		this.registerInterval(
-			window.setInterval(() => console.log('setInterval'), 5 * 60 * 1000),
-		);
 	}
 
-	onunload() {}
+	/**
+	 * Resolve the active note and write the result beside the original.
+	 *
+	 * Existing "-resolved" files are overwritten. The source note itself
+	 * is never modified.
+	 */
+	private async resolveActiveFile(file: TFile): Promise<void> {
+		try {
+			const resolved = await this.resolveFile(file, []);
 
-	async loadSettings() {
-		this.settings = Object.assign(
-			{},
-			DEFAULT_SETTINGS,
-			(await this.loadData()) as Partial<MyPluginSettings>,
-		);
+			// Construct the output path using the original file's directory
+			// and basename, avoiding the extension-related filename issue.
+			const outputPath =
+				file.parent?.path
+				? `${file.parent.path}/${file.basename}-resolved.${file.extension}`
+				: `${file.basename}-resolved.${file.extension}`;
+
+			const existing = this.app.vault.getAbstractFileByPath(outputPath);
+
+			// Update an existing resolved file, or create one if it does not exist.
+			if (existing) {
+				if (!(existing instanceof TFile)) {
+					throw new TescadeError(
+						`Output path is not a file: ${outputPath}`,
+					);
+				}
+
+				await this.app.vault.modify(existing, resolved);
+			} else {
+				await this.app.vault.create(outputPath, resolved);
+			}
+
+			new Notice(`Resolved: ${outputPath}`);
+		} catch (error) {
+			// Convert any resolution error into a user-visible Obsidian notice.
+			const message =
+				error instanceof Error ? error.message : String(error);
+
+			new Notice(`Tescade: ${message}`);
+		}
 	}
 
-	async saveSettings() {
-		await this.saveData(this.settings);
-	}
-}
+	/**
+	 * Resolve a single file recursively.
+	 *
+	 * `stack` contains the files currently being resolved. It is used to
+	 * detect circular references without preventing the same note from
+	 * appearing independently in different branches of the document.
+	 */
+	private async resolveFile(
+		file: TFile,
+		stack: string[],
+	): Promise<string> {
+		if (stack.includes(file.path)) {
+			const chain = [...stack, file.path].join(' → ');
+			throw new CircularIncludeError(
+				`circular link detected: ${chain}`,
+			);
+		}
 
-class SampleModal extends Modal {
-	onOpen() {
-		const { contentEl } = this;
-		contentEl.setText('Woah!');
+		const text = await this.app.vault.read(file);
+
+		return this.resolveText(text, file, [...stack, file.path]);
 	}
 
-	onClose() {
-		const { contentEl } = this;
-		contentEl.empty();
+	/**
+	 * Replace every wikilink in a piece of text with the recursively
+	 * resolved contents of its target file.
+	 *
+	 * Text that is not part of a wikilink is copied unchanged.
+	 */
+	private async resolveText(
+		text: string,
+		currentFile: TFile,
+		stack: string[],
+	): Promise<string> {
+		const matches = [...text.matchAll(WIKILINK_PATTERN)];
+
+		// Avoid rebuilding the string when the file contains no wikilinks.
+		if (matches.length === 0) {
+			return text;
+		}
+
+		let result = '';
+		let lastIndex = 0;
+
+		for (const match of matches) {
+			const fullMatch = match[0];
+			const linkTarget = match[1].trim();
+			const matchIndex = match.index!;
+
+			// Preserve everything between this wikilink and the previous one.
+			result += text.slice(lastIndex, matchIndex);
+
+			// Let Obsidian resolve the wikilink according to its own vault
+			// and link-resolution rules rather than treating it as a path.
+			const linkedFile = this.app.metadataCache.getFirstLinkpathDest(
+				linkTarget,
+				currentFile.path,
+			);
+
+			if (!linkedFile) {
+				throw new MissingFileError(
+					`file not found for wikilink: [[${linkTarget}]] in ${currentFile.path}`,
+				);
+			}
+
+			// Replace the wikilink itself with the complete contents of the
+			// referenced file, recursively resolving any links it contains.
+			result += await this.resolveFile(linkedFile, stack);
+
+			lastIndex = matchIndex + fullMatch.length;
+		}
+
+		// Preserve the text following the final wikilink.
+		result += text.slice(lastIndex);
+
+		return result;
 	}
 }
