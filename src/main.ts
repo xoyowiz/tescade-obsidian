@@ -147,7 +147,11 @@ export default class TescadePlugin extends Plugin {
 
 		for (const match of matches) {
 			const fullMatch = match[0];
-			const linkTarget = match[1].trim();
+			const linkTarget = match[1]?.trim();
+
+			if (!linkTarget) {
+				throw new TescadeError(`Invalid wikilink in ${currentFile.path}`);
+			}
 			const matchIndex = match.index!;
 
 			// Preserve everything between this wikilink and the previous one.
